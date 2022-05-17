@@ -1,7 +1,7 @@
 use std::{io::{Write, self, BufRead, BufReader}, collections::{VecDeque, HashSet}, ops::Index, f64::consts::PI, fs::File, path::Path, iter::Map};
 use ndarray::{prelude::*, IndexLonger, AssignElem};
 use rand::prelude::*;
-use utilities::save_gnuplot2D;
+use utilities::{save_gnuplot2D, save_gnuplot1D};
 
 use crate::utilities::get_file_buffer;
 
@@ -275,10 +275,10 @@ impl Fuleren {
             let r_ik = self._r_ij(i, k); 
 
             if r_ik <= R1 {
-                ksi += self._g_ijk(i, j, k)
+                ksi += self._g_ijk_test(i, j, k)
             }
             else if r_ik <= R2 {
-                ksi += 0.5*(1. + ((r_ik - R1)/(R2-R1)*PI).cos() ) * self._g_ijk(i, j, k)
+                ksi += 0.5*(1. + ((r_ik - R1)/(R2-R1)*PI).cos() ) * self._g_ijk_test(i, j, k)
             }
         }
         
@@ -286,10 +286,12 @@ impl Fuleren {
     }
 
     fn _r_ij(&self, i:usize, j:usize) -> f64 {
-        let vec_i = array![self.positions[i].x,self.positions[i].y,self.positions[i].z];
-        let vec_j = array![self.positions[j].x,self.positions[j].y,self.positions[j].z];
-
-        _mod_vec(&(vec_j - vec_i))
+        // let vec_i = array![self.positions[i].x,self.positions[i].y,self.positions[i].z];
+        // let vec_j = array![self.positions[j].x,self.positions[j].y,self.positions[j].z];
+        let vec_ij = [self.positions[j].x - self.positions[i].x,
+                                self.positions[j].y - self.positions[i].y,
+                                self.positions[j].z - self.positions[i].z];
+        _mod_arr(&vec_ij)
     }
 
     fn _g_ijk(&self, i: usize, j: usize, k: usize) -> f64 {
@@ -304,6 +306,35 @@ impl Fuleren {
         let vec_ik = vec_k - vec_i;
 
         let cos_ijk = vec_ij.dot(&vec_ik)/_mod_vec(&vec_ij)/_mod_vec(&vec_ik);
+        
+        a0*( 1. + c0.powi(2)/d0.powi(2) - c0.powi(2)/( d0.powi(2) + (1. + cos_ijk).powi(2) ) )
+
+        
+    }
+
+    fn mean_r(&self) -> f64 {
+        self.positions.iter()
+                      .map(|point| point.r)
+                      .sum::<f64>()/(self.size as f64)
+    }
+
+    // timing tests
+    fn _g_ijk_test(&self, i: usize, j: usize, k: usize) -> f64 {
+        // let vec_i = array![self.positions[i].x,self.positions[i].y,self.positions[i].z];
+        // let vec_j = array![self.positions[j].x,self.positions[j].y,self.positions[j].z];
+        // let vec_k = array![self.positions[k].x,self.positions[k].y,self.positions[k].z];
+        // let atom_i = &self.positions[i];
+        // let atom_j = &self.positions[j];
+        // let atom_k = &self.positions[k];
+
+        let vec_ij = [self.positions[j].x - self.positions[i].x,
+                                self.positions[j].y - self.positions[i].y,
+                                self.positions[j].z - self.positions[i].z];
+        let vec_ik = [self.positions[k].x - self.positions[i].x,
+                                self.positions[k].y - self.positions[i].y,
+                                self.positions[k].z - self.positions[i].z];
+
+        let cos_ijk = (vec_ij[0]*vec_ik[0] + vec_ij[1]*vec_ik[1] + vec_ij[2]*vec_ik[2])/_mod_arr(&vec_ij)/_mod_arr(&vec_ik);
         
         a0*( 1. + c0.powi(2)/d0.powi(2) - c0.powi(2)/( d0.powi(2) + (1. + cos_ijk).powi(2) ) )
 
@@ -339,6 +370,9 @@ fn _v_a(r: f64) -> f64 {
 fn _mod_vec(vec: &Array1<f64>) -> f64 {
     (vec[0].powi(2) + vec[1].powi(2) + vec[2].powi(2)).sqrt()
 }
+fn _mod_arr(vec: &[f64;3]) -> f64 {
+    (vec[0].powi(2) + vec[1].powi(2) + vec[2].powi(2)).sqrt()
+}
 
 fn check_angles(mut phi: f64, mut theta: f64) -> (f64, f64) {
     //phi [0, 2*PI]
@@ -358,28 +392,83 @@ where P: AsRef<Path>, {
     Ok(io::BufReader::new(file).lines())
 }
 
+fn get_beta(it: usize, it_max: usize, b_min: f64, b_max: f64, p: f64) -> f64 {
+    b_min + (it as f64/it_max as f64).powf(p) * (b_max - b_min)
+}
+
 // ##################################
 
 fn main() {
-    let mut rng = rand::thread_rng();
+    // let mut rng = rand::thread_rng();
     // let distr = rand::distributions::Uniform::new_inclusive(0, 3);
 
-    let N = 10;
-
-    // let point1 = Point6::from_cartesian(&[1.,2.,3.]);
-
-    // let mut F = Fuleren::new(10);
-
+    
+    // test for preprepared data
+    // let mut F = Fuleren::from_file("data/atoms_test.dat").unwrap();
+    // F.energy_calc();
     // println!("{}", F);
+    
+    // task 2: simulation for unchanged brennner potential #################################
+    let N = 60;
+    let beta_min = 1.;
+    let beta_max = 100.;
+    let p = 2.;
+    let it_max: usize = 100_000;
+    // for saving #############
+    let save_step: usize = 100;
+    let mut e_array = VectorFloat::zeros(it_max/save_step);
+    let mut r_mean_array = VectorFloat::zeros(it_max/save_step);
 
-    // F.randomize_on_sphere(1.);
-    // println!("{}", F);
+    //################
 
-    let mut F = Fuleren::from_file("data/atoms_test.dat").unwrap();
-    F.energy_calc();
+    let mut F = Fuleren::new(N);
+    F.randomize_on_sphere(3.5);
+
+    for it in 0..it_max {
+        let beta = get_beta(it, it_max, beta_min, beta_max, p);
+
+        // random atom shifts
+        for i in 0..N {
+            F.random_atom_shift(i, beta);
+        }
+        //global radius shift
+        F.random_global_r_shift(beta);
+
+        if it % save_step == 0 {
+            println!("E={}, r_mean={}, it={}", F.E, F.mean_r(), it);
+            e_array[it / save_step] = F.E;
+            r_mean_array[it / save_step] = F.mean_r();
+        }
+        
+    }
+    // let mut f= get_file_buffer("energy_tab.txt");
+
+    save_gnuplot1D(&e_array, "energy_tab.txt");
+    save_gnuplot1D(&r_mean_array, "r_tab.txt");
     println!("{}", F);
+    // ################################################
+    //########## TIMINGS #############################
+    // let mut F = Fuleren::new(60);
+    // F.randomize_on_sphere(1.);
+
+    // let iter_max = 1000_000;
+    // let start = std::time::Instant::now();
+    // for _ in 0..iter_max {
+    //     F._ksi_ij(1, 2);
+    // }
+    // let duration = start.elapsed().as_micros();
+    // println!("Time mean: {} us", duration as f64/(iter_max as f64));
+
+    // let mut F = Fuleren::new(60);
+    // F.randomize_on_sphere(1.);
 
     
-    
+    // let start = std::time::Instant::now();
+    // for _ in 0..iter_max {
+    //     F._g_ijk_test(1, 2, 3);
+    // }
+    // let duration = start.elapsed().as_nanos();
+    // println!("Time mean: {} ns", duration as f64/(iter_max as f64));
+
 }
 
