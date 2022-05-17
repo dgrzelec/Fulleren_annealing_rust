@@ -1,4 +1,4 @@
-use std::{io::{Write}, collections::{VecDeque, HashSet}, ops::Index, f64::consts::PI};
+use std::{io::{Write, self, BufRead, BufReader}, collections::{VecDeque, HashSet}, ops::Index, f64::consts::PI, fs::File, path::Path, iter::Map};
 use ndarray::{prelude::*, IndexLonger, AssignElem};
 use rand::prelude::*;
 use utilities::save_gnuplot2D;
@@ -78,6 +78,13 @@ impl Point6 {
     }
 }
 
+impl std::fmt::Display for Point6 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:<10.5}\t{:<10.5}\t{:<10.5}\t{:<10.5}\t{:<10.5}\t{:<10.5}",
+                 self.x, self.y, self.z, self.r, self.phi, self.theta)
+    }
+}
+
 type Point6Array = Array1<Point6>;
 
 #[derive( Debug)]
@@ -95,8 +102,24 @@ impl Fuleren {
                   E: 0. }
     }
     
-    fn from_file(size: usize, path: &str) -> Fuleren {
-        todo!()
+    fn from_file(path: &str) -> Result<Fuleren, String>  {
+        
+        if let Ok(lines) = read_lines(path) {
+            let iter = lines
+                                                    .map(|line| line
+                                                        .expect("wrong line")
+                                                        .split_ascii_whitespace()
+                                                        .map(|num_str| num_str.parse::<f64>().expect("error duting parsing"))
+                                                        .collect::<Array1<f64>>())
+                                                    .map(|data| Point6::from_cartesian(&data));
+            let pos_array: Point6Array = iter.collect();
+        Ok(Fuleren {size: pos_array.len(), E: 0.,
+                positions: pos_array} )
+        }
+        else {
+            Err("Error during reading from file".to_string())
+        }
+
     }
 
     // methods
@@ -112,6 +135,19 @@ impl Fuleren {
                                                                             rng.sample(theta_distr)]) ));
     }
 }
+
+impl std::fmt::Display for Fuleren {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut res = write!(f, "Fuleren with {} atoms, Energy: {:8.3}\n", self.size, self.E);
+        res = write!(f, "{:<10.5}\t{:<10.5}\t{:<10.5}\t{:<10.5}\t{:<10.5}\t{:<10.5}\n", "x", "y", "z", "r", "phi", "theta");
+        for point in self.positions.iter(){
+            res = write!(f, "{}\n", *point);
+        }
+        res
+    }
+}
+
+
 
 // ####################################
 // ########### functions #############
@@ -129,6 +165,11 @@ fn check_angles(mut phi: f64, mut theta: f64) -> (f64, f64) {
     (phi, theta)
 }
 
+fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
+where P: AsRef<Path>, {
+    let file = File::open(filename).expect("cannot read the file");
+    Ok(io::BufReader::new(file).lines())
+}
 
 // ##################################
 
@@ -137,17 +178,20 @@ fn main() {
     // let distr = rand::distributions::Uniform::new_inclusive(0, 3);
 
     let N = 10;
-    let mut Board = MatrixInt::from_elem((N,N), 5);
 
-    let point1 = Point6::from_cartesian(&[1.,2.,3.]);
+    // let point1 = Point6::from_cartesian(&[1.,2.,3.]);
 
-    let mut F = Fuleren::new(10);
+    // let mut F = Fuleren::new(10);
 
-    println!("{:?}", F.positions);
+    // println!("{}", F);
 
-    F.randomize_on_sphere(1.);
-    println!("{:?}", F.positions);
+    // F.randomize_on_sphere(1.);
+    // println!("{}", F);
 
+    let F = Fuleren::from_file("data/atoms_test.dat").unwrap();
+    println!("{}", F);
+
+    
     
 }
 
