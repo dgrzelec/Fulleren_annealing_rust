@@ -135,6 +135,97 @@ impl Fuleren {
                                                                             rng.sample(theta_distr)]) ));
     }
 
+    fn random_atom_shift(&mut self, i: usize, beta: f64) -> bool {
+        let mut rng = rand::thread_rng();
+        let distr = rand::distributions::Uniform::<f64>::new_inclusive(0., 1.);
+        // hard coded change rates
+        let w_r = 1e-4;
+        let w_phi = 0.05;
+        let w_theta = 0.05;
+
+        let u1 = rng.sample(distr);
+        let u2 = rng.sample(distr);
+        let u3 = rng.sample(distr);
+
+        // let mut atom = &mut self.positions[i];
+
+        //save old values, assign new
+        let r_old = self.positions[i].r;
+        let phi_old = self.positions[i].phi;
+        let theta_old = self.positions[i].theta;
+        
+        let v_old = self._vi(i);
+        
+        let r_new = self.positions[i].r + self.positions[i].r*(2.*u1 - 1.) * w_r;
+        let phi_new = self.positions[i].phi + self.positions[i].phi*(2.*u2 - 1.) * w_phi;
+        let theta_new = self.positions[i].theta + self.positions[i].theta*(2.*u3 - 1.) * w_theta;
+
+        self.positions[i].r = r_new;
+        self.positions[i].phi = phi_new;
+        self.positions[i].theta = theta_new;
+
+        self.positions[i].assert_angles();
+        
+        let r_new = self.positions[i].r;
+        let phi_new = self.positions[i].phi;
+        let theta_new = self.positions[i].theta;
+
+        self.positions[i].assign_elem(Point6::from_spherical(&array![r_new, phi_new, theta_new]));
+
+        let v_new = self._vi(i);
+
+        let _exp = (-beta*(v_new - v_old)).exp();
+        let p_acc = if _exp < 1. { _exp} else { 1.}; // possibly redundand if
+
+        let u4 = rng.sample(distr);
+        if u4 <= p_acc {
+            true
+        }
+        else {
+            self.positions[i].assign_elem(Point6::from_spherical(&array![r_old, phi_old, theta_old]));
+            false
+        }
+    }
+
+    fn random_global_r_shift(&mut self, beta: f64) -> bool {
+        let mut rng = rand::thread_rng();
+        let distr = rand::distributions::Uniform::<f64>::new_inclusive(0., 1.);
+        
+        // old atom positions
+        let atoms_old_array = self.positions.clone();
+        
+        let e_old = self.energy_calc();
+
+        //hard coded rate of change
+        let w_all = 1e-4;
+
+        // updating radius of all atoms + their x,y,z positions via from_spherical constructor
+        let u1 = rng.sample(distr);
+        let r_change = (1. + w_all*(2.*u1 - 1.));
+        let iter = self.positions.iter_mut();
+        for atom in iter {
+            atom.assign_elem(Point6::from_spherical(&array![atom.r*r_change,
+                                                                        atom.phi,
+                                                                        atom.theta]) ); 
+        }
+
+        let e_new = self.energy_calc();
+
+        let _exp = (-beta*(e_new - e_old)).exp();
+        let p_acc = if _exp < 1. { _exp} else { 1.}; 
+
+        let u2 = rng.sample(distr);
+        if u2 <= p_acc {
+            true //since every atom is already updated
+        }
+        else {
+            self.positions.assign_elem(atoms_old_array);
+            false
+        }
+
+
+    }
+
     fn energy_calc(&mut self) -> f64 {
 
         let E = 0.5 * (0..self.size)
