@@ -134,6 +134,90 @@ impl Fuleren {
                                                                             rng.sample(phi_distr), 
                                                                             rng.sample(theta_distr)]) ));
     }
+
+    fn energy_calc(&mut self) -> f64 {
+
+        let E = 0.5 * (0..self.size)
+                    .into_iter()
+                    .map(|i| self._vi(i))
+                    .sum::<f64>();
+        
+        self.E = E;
+        E
+    }
+
+    fn _vi(&self, i:usize) -> f64 {
+        let mut vi = 0.;
+
+        // create enumerate iterator with i != j 
+        let iter = self.positions.iter()
+                        .enumerate()
+                        .filter(|(j,atom_j)| *j != i);
+        
+        for (j, _) in iter { // possible: create closure f_cut istead of this ifs
+            let r_ij = self._r_ij(i, j); 
+
+            if r_ij <= R1 {
+                vi += _v_r(r_ij) - 0.5*(self._b_ij(i, j) + self._b_ij(j, i)) * _v_a(r_ij)
+            }
+            else if r_ij <= R2 {
+                vi += 0.5*(1. + ((r_ij - R1)/(R2-R1)*PI).cos() )*
+                            (_v_r(r_ij) - 0.5*(self._b_ij(i, j) + self._b_ij(j, i)) * _v_a(r_ij))
+            }
+        }
+        vi
+    }
+
+    fn _b_ij(&self,i:usize, j:usize) -> f64 {
+        (1. + self._ksi_ij(i, j)).powf(-del)
+    }
+
+    fn _ksi_ij(&self, i: usize, j: usize) -> f64 {
+        let mut ksi = 0.;
+
+        // create enumerate iterator with k != i and != j 
+        let iter = self.positions.iter()
+                        .enumerate()
+                        .filter(|(k,atom_k)| *k != i && *k != j);
+        
+        for (k, atom_k) in iter { // possible: create closure f_cut istead of this ifs
+            let r_ik = self._r_ij(i, k); 
+
+            if r_ik <= R1 {
+                ksi += self._g_ijk(i, j, k)
+            }
+            else if r_ik <= R2 {
+                ksi += 0.5*(1. + ((r_ik - R1)/(R2-R1)*PI).cos() ) * self._g_ijk(i, j, k)
+            }
+        }
+        
+        ksi
+    }
+
+    fn _r_ij(&self, i:usize, j:usize) -> f64 {
+        let vec_i = array![self.positions[i].x,self.positions[i].y,self.positions[i].z];
+        let vec_j = array![self.positions[j].x,self.positions[j].y,self.positions[j].z];
+
+        _mod_vec(&(vec_j - vec_i))
+    }
+
+    fn _g_ijk(&self, i: usize, j: usize, k: usize) -> f64 {
+        let vec_i = array![self.positions[i].x,self.positions[i].y,self.positions[i].z];
+        let vec_j = array![self.positions[j].x,self.positions[j].y,self.positions[j].z];
+        let vec_k = array![self.positions[k].x,self.positions[k].y,self.positions[k].z];
+        // let atom_i = &self.positions[i];
+        // let atom_j = &self.positions[j];
+        // let atom_k = &self.positions[k];
+
+        let vec_ij = vec_j - vec_i.clone(); // thats probably unnecessary; less clean code would do it faster
+        let vec_ik = vec_k - vec_i;
+
+        let cos_ijk = vec_ij.dot(&vec_ik)/_mod_vec(&vec_ij)/_mod_vec(&vec_ik);
+        
+        a0*( 1. + c0.powi(2)/d0.powi(2) - c0.powi(2)/( d0.powi(2) + (1. + cos_ijk).powi(2) ) )
+
+        
+    }
 }
 
 impl std::fmt::Display for Fuleren {
@@ -152,6 +236,18 @@ impl std::fmt::Display for Fuleren {
 // ####################################
 // ########### functions #############
 
+// for Brenner potential
+fn _v_r(r: f64) -> f64 {
+    De/(S - 1.) * (-(2.*S).sqrt() * lambda * (r - R0)).exp()
+}
+
+fn _v_a(r: f64) -> f64 {
+    De*S/(S - 1.) * (-(2./S).sqrt() * lambda * (r - R0)).exp()
+}
+
+fn _mod_vec(vec: &Array1<f64>) -> f64 {
+    (vec[0].powi(2) + vec[1].powi(2) + vec[2].powi(2)).sqrt()
+}
 
 fn check_angles(mut phi: f64, mut theta: f64) -> (f64, f64) {
     //phi [0, 2*PI]
@@ -188,7 +284,8 @@ fn main() {
     // F.randomize_on_sphere(1.);
     // println!("{}", F);
 
-    let F = Fuleren::from_file("data/atoms_test.dat").unwrap();
+    let mut F = Fuleren::from_file("data/atoms_test.dat").unwrap();
+    F.energy_calc();
     println!("{}", F);
 
     
