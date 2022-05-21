@@ -170,7 +170,7 @@ impl Fuleren {
         let phi_new = self.positions[i].phi;
         let theta_new = self.positions[i].theta;
 
-        self.positions[i].assign_elem(Point6::from_spherical(&array![r_new, phi_new, theta_new]));
+        self.positions[i].assign_elem(Point6::from_spherical(&array![r_new, phi_new, theta_new])); //this array macro is probably very slow
 
         let v_new = self._vi(i);
 
@@ -275,10 +275,10 @@ impl Fuleren {
             let r_ik = self._r_ij(i, k); 
 
             if r_ik <= R1 {
-                ksi += self._g_ijk_test(i, j, k)
+                ksi += self._g_ijk(i, j, k)
             }
             else if r_ik <= R2 {
-                ksi += 0.5*(1. + ((r_ik - R1)/(R2-R1)*PI).cos() ) * self._g_ijk_test(i, j, k)
+                ksi += 0.5*(1. + ((r_ik - R1)/(R2-R1)*PI).cos() ) * self._g_ijk(i, j, k)
             }
         }
         
@@ -294,38 +294,13 @@ impl Fuleren {
         _mod_arr(&vec_ij)
     }
 
-    fn _g_ijk(&self, i: usize, j: usize, k: usize) -> f64 {
-        let vec_i = array![self.positions[i].x,self.positions[i].y,self.positions[i].z];
-        let vec_j = array![self.positions[j].x,self.positions[j].y,self.positions[j].z];
-        let vec_k = array![self.positions[k].x,self.positions[k].y,self.positions[k].z];
-        // let atom_i = &self.positions[i];
-        // let atom_j = &self.positions[j];
-        // let atom_k = &self.positions[k];
-
-        let vec_ij = vec_j - vec_i.clone(); // thats probably unnecessary; less clean code would do it faster
-        let vec_ik = vec_k - vec_i;
-
-        let cos_ijk = vec_ij.dot(&vec_ik)/_mod_vec(&vec_ij)/_mod_vec(&vec_ik);
-        
-        a0*( 1. + c0.powi(2)/d0.powi(2) - c0.powi(2)/( d0.powi(2) + (1. + cos_ijk).powi(2) ) )
-
-        
-    }
-
     fn mean_r(&self) -> f64 {
         self.positions.iter()
                       .map(|point| point.r)
                       .sum::<f64>()/(self.size as f64)
     }
 
-    // timing tests
-    fn _g_ijk_test(&self, i: usize, j: usize, k: usize) -> f64 {
-        // let vec_i = array![self.positions[i].x,self.positions[i].y,self.positions[i].z];
-        // let vec_j = array![self.positions[j].x,self.positions[j].y,self.positions[j].z];
-        // let vec_k = array![self.positions[k].x,self.positions[k].y,self.positions[k].z];
-        // let atom_i = &self.positions[i];
-        // let atom_j = &self.positions[j];
-        // let atom_k = &self.positions[k];
+    fn _g_ijk(&self, i: usize, j: usize, k: usize) -> f64 {
 
         let vec_ij = [self.positions[j].x - self.positions[i].x,
                                 self.positions[j].y - self.positions[i].y,
@@ -336,9 +311,48 @@ impl Fuleren {
 
         let cos_ijk = (vec_ij[0]*vec_ik[0] + vec_ij[1]*vec_ik[1] + vec_ij[2]*vec_ik[2])/_mod_arr(&vec_ij)/_mod_arr(&vec_ik);
         
-        a0*( 1. + c0.powi(2)/d0.powi(2) - c0.powi(2)/( d0.powi(2) + (1. + cos_ijk).powi(2) ) )
+        // modyfication to forbid 4-atom bindings
+        if cos_ijk > 0. {
+            20. // experimental value
+        }
+        else {
+            a0*( 1. + c0.powi(2)/d0.powi(2) - c0.powi(2)/( d0.powi(2) + (1. + cos_ijk).powi(2) ) )
+        }
 
+        // a0*( 1. + c0.powi(2)/d0.powi(2) - c0.powi(2)/( d0.powi(2) + (1. + cos_ijk).powi(2) ) )
         
+    }
+
+    fn pcf(&self) -> VectorFloat {
+        // hard coded number of bins
+        let M: usize = 100;
+        let mut pcf = VectorFloat::zeros(M);
+        let r_sr = self.mean_r();
+        let r_max = 2.5*r_sr;
+
+        let dr = r_max/M as f64;
+        
+        for i in 0..self.size {
+            for j in (i+1)..self.size {
+                let r = self._r_ij(i, j);
+                let m = (r/dr).floor() as usize;
+                // safety if; this is potentially unsafe but assuming we know what we are doing its ok
+                if m < M {
+                    pcf[m] += 2.*4.*PI*r_sr.powi(2)/( (self.size.pow(2) as f64)*2.*PI*r*dr);
+                }
+            }
+        }
+        pcf
+    }
+
+    fn save_pos_xyz(&self, path: &str) {
+        let iter = self.positions.iter();
+
+        let mut f = get_file_buffer(path);
+
+        for atom in iter{
+            write!(f, "{:<10.5}\t{:<10.5}\t{:<10.5}\n", atom.x, atom.y, atom.z).expect("Error during saving");
+        }
     }
 }
 
@@ -399,54 +413,93 @@ fn get_beta(it: usize, it_max: usize, b_min: f64, b_max: f64, p: f64) -> f64 {
 // ##################################
 
 fn main() {
-    // let mut rng = rand::thread_rng();
-    // let distr = rand::distributions::Uniform::new_inclusive(0, 3);
-
     
     // test for preprepared data
     // let mut F = Fuleren::from_file("data/atoms_test.dat").unwrap();
     // F.energy_calc();
     // println!("{}", F);
     
-    // task 2: simulation for unchanged brennner potential #################################
-    let N = 60;
-    let beta_min = 1.;
-    let beta_max = 100.;
-    let p = 2.;
-    let it_max: usize = 100_000;
-    // for saving #############
-    let save_step: usize = 100;
-    let mut e_array = VectorFloat::zeros(it_max/save_step);
-    let mut r_mean_array = VectorFloat::zeros(it_max/save_step);
+    // // task 2: simulation for unchanged brennner potential #################################
+    // let N = 30;
+    // let beta_min = 1.;
+    // let beta_max = 100.; // try
+    // let p = 2.;
+    // let it_max: usize = 100_000;
+    // // for saving #############
+    // let save_step: usize = 100;
+    // let mut e_array = VectorFloat::zeros(it_max/save_step);
+    // let mut r_mean_array = VectorFloat::zeros(it_max/save_step);
 
-    //################
+    // //################
 
-    let mut F = Fuleren::new(N);
-    F.randomize_on_sphere(3.5);
+    // let mut F = Fuleren::new(N);
+    // F.randomize_on_sphere(2.5);
 
-    for it in 0..it_max {
-        let beta = get_beta(it, it_max, beta_min, beta_max, p);
+    // for it in 0..it_max {
+    //     let beta = get_beta(it, it_max, beta_min, beta_max, p);
 
-        // random atom shifts
-        for i in 0..N {
-            F.random_atom_shift(i, beta);
-        }
-        //global radius shift
-        F.random_global_r_shift(beta);
+    //     // random atom shifts
+    //     for i in 0..N {
+    //         F.random_atom_shift(i, beta);
+    //     }
+    //     //global radius shift
+    //     F.random_global_r_shift(beta);
 
-        if it % save_step == 0 {
-            println!("E={}, r_mean={}, it={}", F.E, F.mean_r(), it);
-            e_array[it / save_step] = F.E;
-            r_mean_array[it / save_step] = F.mean_r();
-        }
+    //     if it % save_step == 0 {
+    //         // println!("E={}, r_mean={}, it={}", F.E, F.mean_r(), it);
+    //         e_array[it / save_step] = F.E;
+    //         r_mean_array[it / save_step] = F.mean_r();
+    //     }
         
-    }
-    // let mut f= get_file_buffer("energy_tab.txt");
+    // }
+    // // let mut f= get_file_buffer("energy_tab.txt");
 
-    save_gnuplot1D(&e_array, "energy_tab.txt");
-    save_gnuplot1D(&r_mean_array, "r_tab.txt");
-    println!("{}", F);
-    // ################################################
+    // save_gnuplot1D(&e_array, "plots/energy_tab.dat");
+    // save_gnuplot1D(&r_mean_array, "plots/r_tab.dat");
+    // save_gnuplot1D(&F.pcf(), "plots/pcf.dat");
+    // F.save_pos_xyz("plots/atoms.dat");
+    // println!("{}", F);
+    // println!("r_sr = {}", F.mean_r());
+    // println!("E/N = {}", F.E/F.size as f64);
+    // // ################################################
+
+
+    //#################################
+        // task 5: simulation for changed brennner potential, for N in range 30,60 #################################
+        let beta_min = 1.;
+        let beta_max = 100.; // try
+        let p = 2.;
+        let it_max: usize = 100_000;
+        // for saving #############
+        let mut EN_tab = VectorFloat::zeros(31);
+        //################
+    
+        for N in 30..=60 {
+
+            let mut F = Fuleren::new(N);
+            F.randomize_on_sphere(2.5);
+        
+            for it in 0..it_max {
+                let beta = get_beta(it, it_max, beta_min, beta_max, p);
+        
+                // random atom shifts
+                for i in 0..N {
+                    F.random_atom_shift(i, beta);
+                }
+                //global radius shift
+                F.random_global_r_shift(beta);
+        
+                
+                
+            }
+            EN_tab[N-30] = F.E/N as f64;
+            println!("N = {}; E/N = {}", N, F.E/N as f64);
+        }
+
+        save_gnuplot1D(&EN_tab, "plots/EN_tab");
+    //#################################
+
+
     //########## TIMINGS #############################
     // let mut F = Fuleren::new(60);
     // F.randomize_on_sphere(1.);
